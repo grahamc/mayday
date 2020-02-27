@@ -3,7 +3,6 @@ use hashicorp_vault::client::VaultResponse;
 use serde::Deserialize;
 use std::collections::HashSet;
 
-#[derive(Debug)]
 pub struct Diff<T> {
     pub added: HashSet<T>,
     pub removed: HashSet<T>,
