@@ -52,6 +52,6 @@ fn main() {
         let diff = server_monitor.sync().expect("Failed to sync!");
         tailer.update(diff.added, diff.removed);
 
-        thread::sleep(time::Duration::from_secs(30));
+        thread::sleep(time::Duration::from_secs(20));
     }
 }
