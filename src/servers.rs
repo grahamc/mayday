@@ -1,4 +1,5 @@
-use hashicorp_vault::client::{EndpointResponse, HttpVerb, VaultClient};
+use crate::vault::AutoRevokedClient;
+use hashicorp_vault::client::VaultResponse;
 use serde::Deserialize;
 use std::collections::HashSet;
 
@@ -59,30 +60,30 @@ struct PacketLink {
     href: String,
 }
 
-pub struct Monitor<V> {
+pub struct Monitor {
     logger: slog::Logger,
-    client: VaultClient<V>,
-    key: String,
+    client: AutoRevokedClient,
+    secret_engine: String,
+    vault_role: String,
     project_id: String,
     token: Option<LeasedKey<PacketKey>>,
     devices: HashSet<Device>,
 }
 
-impl<V> Monitor<V>
-where
-    V: serde::de::DeserializeOwned,
-{
+impl Monitor {
     pub fn new(
         logger: slog::Logger,
-        client: VaultClient<V>,
+        client: AutoRevokedClient,
         project_id: String,
-        key: String,
-    ) -> Monitor<V> {
+        secret_engine: String,
+        vault_role: String,
+    ) -> Monitor {
         Monitor {
             logger,
             client,
             project_id,
-            key,
+            secret_engine,
+            vault_role,
             token: None,
             devices: HashSet::new(),
         }
@@ -140,7 +141,7 @@ where
         if let Some(token) = self.token.take() {
             if token.renewable {
                 info!(self.logger, "Renewing Packet token");
-                match self.client.renew_lease(&token.lease_id, Some(60)) {
+                match self.client.client().renew_lease(&token.lease_id, Some(60)) {
                     Ok(res) => {
                         info!(self.logger, "Renewed Packet token successfully");
                         self.token = Some(LeasedKey {
@@ -159,20 +160,17 @@ where
 
         if self.token.is_none() {
             info!(self.logger, "Creating a new Packet token");
-            let res: EndpointResponse<PacketKey> = self
+            let res: VaultResponse<PacketKey> = self
                 .client
-                .call_endpoint(HttpVerb::GET, &self.key, None, None)
+                .client()
+                .get_secret_engine_creds(&self.secret_engine, &self.vault_role)
                 .expect("Failed to get a Packet token");
 
-            if let EndpointResponse::VaultResponse(res) = res {
-                self.token = Some(LeasedKey {
-                    key: res.data.expect("Token Data missing from Vault reply"),
-                    renewable: res.renewable.expect("renewable missing from Vault reply"),
-                    lease_id: res.lease_id.expect("lease_id missing from Vault reply"),
-                });
-            } else {
-                crit!(self.logger, "Vault gave back an empty token");
-            }
+            self.token = Some(LeasedKey {
+                key: res.data.expect("Token Data missing from Vault reply"),
+                renewable: res.renewable.expect("renewable missing from Vault reply"),
+                lease_id: res.lease_id.expect("lease_id missing from Vault reply"),
+            });
         }
 
         self.token.as_ref().map(|ref token| &token.key)

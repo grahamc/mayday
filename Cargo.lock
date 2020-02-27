@@ -505,7 +505,7 @@ dependencies = [
 [[package]]
 name = "hashicorp_vault"
 version = "0.7.0"
-source = "git+https://github.com/ChrisMacNaughton/vault-rs.git?rev=169e818038d75e2211e725d5b07a572c7467fe18#169e818038d75e2211e725d5b07a572c7467fe18"
+source = "git+https://github.com/grahamc/vault-rs.git?rev=148b22a4dc5d1e16999591f604db3305ea7415ef#148b22a4dc5d1e16999591f604db3305ea7415ef"
 dependencies = [
  "base64 0.7.0",
  "chrono",
