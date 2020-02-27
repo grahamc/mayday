@@ -45,7 +45,8 @@ impl Tailer {
                 Ok(None) => {
                     // still running
                     if let Some(stdin) = child.stdin.as_mut() {
-                        if let Err(e) = (*stdin).write(b"\b") {
+                        let backspace = 0x08;
+                        if let Err(e) = (*stdin).write(&[backspace]) {
                             error!(self.logger, "Failed to write to child's stdin"; "e" => ?e);
                         }
                     } else {
