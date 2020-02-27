@@ -1,7 +1,8 @@
 use crate::servers::Device;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::path::PathBuf;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 pub struct Tailer {
@@ -21,33 +22,73 @@ impl Tailer {
 
     pub fn update(&mut self, added: HashSet<Device>, removed: HashSet<Device>) {
         for device in removed.into_iter() {
-            info!(self.logger, "Server gone, killing tailer"; "server" => ?device);
-            self.children
-                .remove(&device)
-                .map(|mut child| child.kill().unwrap());
+            if let Some(mut child) = self.children.remove(&device) {
+                info!(self.logger, "Server gone, killing tailer"; "server" => ?device);
+                if child.kill().is_err() {
+                    info!(self.logger, "Tailer already dead."; "server" => ?device);
+                }
+            }
         }
-        for device in added.into_iter().take(5) {
-            let sos = device.sos();
-            let filename = self
-                .output_dir
-                .as_path()
-                .join(format!("{}-{}", device.hostname, device.id));
-            info!(self.logger, "New server, spawning tailer"; "file" => ?filename, "server" => ?device);
-            let file = File::create(filename).expect("Failed to create tailer file");
-            self.children.insert(
-                device,
-                Command::new("ssh")
-                    .arg("-t")
-                    .arg("-t")
-                    .arg(&sos)
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::from(file))
-                    .stderr(Stdio::inherit())
-                    .spawn()
-                    .expect("Failed to spawn SSH"),
-            );
+
+        let output_dir = self.output_dir.as_path();
+        for (device, child) in self.children.iter_mut() {
+            let logger = self.logger.new(o!(
+                "id" => format!("{}", device.id),
+                "hostname" => format!("{}", device.hostname)
+            ));
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    info!(logger, "Tailer exited, respawning"; "status" => ?status);
+
+                    *child = spawn_tailer(&output_dir, &device).expect("Failed to re-spawn tailer");
+                }
+                Ok(None) => {
+                    // still running
+                    if let Some(stdin) = child.stdin.as_mut() {
+                        if let Err(e) = (*stdin).write(b"\b") {
+                            error!(self.logger, "Failed to write to child's stdin"; "e" => ?e);
+                        }
+                    } else {
+                        error!(self.logger, "bug! child has no stdin?");
+                    }
+                }
+                Err(e) => {
+                    error!(self.logger, "Error waiting on tailer"; "e" => ?e);
+                }
+            }
+        }
+
+        for device in added.into_iter() {
+            info!(self.logger, "New server, spawning tailer"; "server" => ?device);
+            let child =
+                spawn_tailer(&self.output_dir.as_path(), &device).expect("Failed to spawn tailer");
+
+            self.children.insert(device, child);
         }
     }
+}
+
+fn spawn_tailer(output_dir: &Path, device: &Device) -> Result<Child, std::io::Error> {
+    let sos = device.sos();
+    let filename = output_dir.join(format!("{}-{}", device.hostname, device.id));
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(filename)?;
+
+    file.write_all(b"\n\n ~~~ MAYDAY TAILER RESTART ~~~ \n\n")?;
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    Command::new("ssh")
+        .arg("-t")
+        .arg("-t")
+        .arg(&sos)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(file))
+        .stderr(Stdio::inherit())
+        .spawn()
 }
 
 impl Drop for Tailer {
